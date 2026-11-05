@@ -1,0 +1,43 @@
+name: join-parts
+on:
+  push:
+    branches: [main]
+    paths: ["media/parts/**/done.json"]
+permissions:
+  contents: write
+concurrency:
+  group: join-parts
+  cancel-in-progress: false
+jobs:
+  join:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Join uploaded pieces into one file
+        run: |
+          set -e
+          python3 - <<'PY'
+          import json, os, re, subprocess, glob
+          for d in sorted(glob.glob("media/parts/*/")):
+              f = os.path.join(d, "done.json")
+              if not os.path.exists(f):
+                  continue
+              meta = json.load(open(f))
+              name, count = str(meta.get("name", "")), int(meta.get("count", 0))
+              if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,80}\.(mp4|jpg|png)", name):
+                  print("bad name", name); continue
+              parts = sorted(p for p in os.listdir(d) if re.fullmatch(r"p\d{3}", p))
+              if len(parts) != count:
+                  print("missing pieces in", d); continue
+              with open(os.path.join("media", name), "wb") as out:
+                  for p in parts:
+                      out.write(open(os.path.join(d, p), "rb").read())
+              subprocess.run(["git", "rm", "-rq", d], check=True)
+          PY
+          git config user.name "wordshirt-hq-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add media
+          git diff --cached --quiet && exit 0
+          git commit -qm "Join uploaded pieces"
+          git pull --rebase -q
+          git push -q
